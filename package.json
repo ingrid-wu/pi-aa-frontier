@@ -1,0 +1,19 @@
+{
+  "name": "pi-aa-frontier",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scope Pi models to the Artificial Analysis intelligence-versus-price Pareto frontier",
+  "type": "module",
+  "keywords": ["pi-package", "pareto-frontier"],
+  "engines": { "node": ">=22.23.0" },
+  "pi": { "extensions": ["./extensions/aa-frontier/index.ts"] },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "test": "node --test tests/frontier.test.mjs",
+    "test:integration": "node --experimental-strip-types --test tests/core.test.mjs tests/lifecycle.test.mts",
+    "patch:core": "node scripts/patch-core.mjs"
+  }
+}
