@@ -9,7 +9,8 @@
   "pi": { "extensions": ["./extensions/aa-frontier/index.ts"] },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "scripts": {
     "test": "node --test tests/frontier.test.mjs",

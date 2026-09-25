@@ -38,18 +38,17 @@ PI_CORE_ROOTS=/absolute/path/to/@earendil-works/pi-coding-agent node scripts/pat
 
 The script verifies version 0.85.1 and exact patch targets, backs up originals outside this repository, and refuses changed installations. It patches the CLI bundle, SDK implementation, and public types. **Restart Pi once** after applying it; `/reload` does not reload core code.
 
-Provide your key through `AA_API_KEY` in Pi's environment, or save it privately in:
+On first load, the extension automatically creates `~/.pi/agent/aa-frontier/` with owner-only permissions. In an enabled interactive session, a missing key opens a masked setup prompt. Obtain your key at https://artificialanalysis.ai/api and paste it into that prompt—not chat. It is saved as `api-key` with `0600` permissions, then the frontier refreshes automatically.
 
-```text
-~/.pi/agent/aa-frontier/api-key
-```
+Escape skips setup without changing your scope. Run `/aa-frontier setup` to try again. Check `/aa-frontier status` and `/scoped-models` after setup.
 
-For the file option, use `chmod 600` on the file. Never commit keys or paste them into chat. Then run `/aa-frontier refresh` and open `/scoped-models`.
+Existing `AA_API_KEY` environment values or non-empty private key files skip onboarding. Environment values take precedence. Disabled, headless and RPC sessions never automatically prompt; hourly refreshes never prompt. The key is not stored in chat or config.json. Manually created key files must have private permissions (`chmod 600`). Never commit keys.
 
 ## Commands
 
 | Command | Effect |
 | --- | --- |
+| `/aa-frontier setup` | Prompt for a missing key and refresh (interactive, enabled sessions only) |
 | `/aa-frontier status` | Last result, frontier scores/prices, selected and unmatched models, latest error |
 | `/aa-frontier refresh` | Refresh immediately if enabled |
 | `/aa-frontier on` | Enable persistently and refresh |
@@ -107,12 +106,12 @@ Pure logic tests need only Node:
 npm test
 ```
 
-Integration tests require patched Pi installations and the Pi peer packages resolvable locally:
+Integration tests require patched Pi installations; lifecycle tests resolve Pi packages through the selected installation:
 
 ```sh
 npm run test:integration
 ```
 
-Set `PI_CORE_ROOTS` for non-default installation locations. Integration tests use fake API responses, never a live key. They cover real Pi extension loading, the scope bridge, restoration, stale-refresh cancellation, and headless no-op behavior.
+Set `PI_CORE_ROOTS` for non-default installation locations. Integration tests use fake API responses, never a live key. They cover real Pi extension loading, the scope bridge, restoration, stale-refresh cancellation, headless no-op behavior, onboarding, private file permissions, masked input, and cancellation.
 
 All 13 tests passed on the original installation. Live authenticated AA fetching remains unverified until an API key is configured; a full TypeScript check was not run because `tsgo` was unavailable.

@@ -1,16 +1,19 @@
-import { readFile, mkdir, writeFile, rename, stat } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, stat, mkdtemp, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
 import { fetchRows, frontier, selectModels, validateConfig } from './frontier.mjs';
+import { promptApiKey } from './key-prompt.ts';
 
 const directory = join(homedir(), '.pi/agent/aa-frontier');
 const configPath = join(directory, 'config.json');
 const keyPath = join(directory, 'api-key');
 const intervalMs = 60 * 60 * 1000;
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  let needsSetup = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let pending: AbortController | undefined;
   let generation = 0;
@@ -52,7 +55,7 @@ export default function (pi: ExtensionAPI) {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
-    throw new Error(`Set AA_API_KEY or put your AA API key in ${keyPath} (chmod 600).`);
+    return undefined;
   }
   function cancel() {
     generation++;
@@ -64,12 +67,12 @@ export default function (pi: ExtensionAPI) {
     original = undefined;
     lastApplied = undefined;
   }
-  async function refresh(ctx: ExtensionContext, manual = false) {
+  async function refresh(ctx: ExtensionContext, manual = false, allowPrompt = manual) {
     cancel();
     const current = generation;
     const controller = new AbortController();
     pending = controller;
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const active = () => !disposed && generation === current;
     try {
       const settings = await config();
@@ -77,8 +80,34 @@ export default function (pi: ExtensionAPI) {
       enabled = settings.enabled;
       if (!enabled) { restore(ctx); details = 'Disabled.'; status(ctx); return; }
       if (typeof ctx.setScopedModels !== 'function') throw new Error('Live scoped-model API missing. Apply the core patch and restart Pi once.');
-      const key = await apiKey();
+      let key = await apiKey();
       if (!active()) return;
+      needsSetup = !key;
+      if (!key && allowPrompt && ctx.mode === 'tui' && ctx.hasUI) {
+        key = await promptApiKey(ctx, controller.signal);
+        if (!active()) return;
+        if (key) {
+          const tempDir = await mkdtemp(join(directory, '.key-'));
+          try {
+            const tempKey = join(tempDir, 'api-key');
+            await writeFile(tempKey, `${key}\n`, { mode: 0o600, flag: 'wx' });
+            if (!active()) return;
+            await rename(tempKey, keyPath);
+          } finally {
+            await rm(tempDir, { recursive: true, force: true });
+          }
+          needsSetup = false;
+          notify(ctx, 'AA API key saved privately. Refreshing frontier.');
+        }
+      }
+      if (!key) {
+        lastError = 'AA API key not configured. Run /aa-frontier setup, or set AA_API_KEY.';
+        status(ctx, 'AA frontier: setup needed');
+        if (allowPrompt) notify(ctx, lastError);
+        return;
+      }
+      if (!active()) return;
+      timeout = setTimeout(() => controller.abort(), 30_000);
       const data = await fetchRows(key, controller.signal);
       if (!active()) return;
       const edge = frontier(data.rows);
@@ -117,9 +146,9 @@ export default function (pi: ExtensionAPI) {
     owner = ctx;
     disposed = false;
     if (ctx.mode !== 'tui') return;
-    await refresh(ctx);
+    await refresh(ctx, false, true);
     if (disposed) return;
-    timer = setInterval(() => { if (enabled && !pending) void refresh(ctx); }, intervalMs);
+    timer = setInterval(() => { if (enabled && !pending && !needsSetup) void refresh(ctx); }, intervalMs);
     timer.unref();
   });
   pi.on('session_shutdown', async (_event, ctx) => {
@@ -132,7 +161,7 @@ export default function (pi: ExtensionAPI) {
     status(ctx);
   });
   pi.registerCommand('aa-frontier', {
-    description: 'AA intelligence/price scope: status, refresh, on, off',
+    description: 'AA intelligence/price scope: setup, status, refresh, on, off',
     handler: async (args, ctx) => {
       const action = args.trim() || 'status';
       try {
@@ -149,7 +178,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         if (action === 'on') { await saveEnabled(true); enabled = true; }
-        else if (action !== 'refresh') { notify(ctx, 'Usage: /aa-frontier [status|refresh|on|off]'); return; }
+        else if (action !== 'refresh' && action !== 'setup') { notify(ctx, 'Usage: /aa-frontier [setup|status|refresh|on|off]'); return; }
         await refresh(ctx, true);
       } catch (error) {
         notify(ctx, error instanceof Error ? error.message : 'AA frontier command failed', true);
