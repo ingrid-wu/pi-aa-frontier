@@ -13,8 +13,8 @@
     "@earendil-works/pi-tui": "*"
   },
   "scripts": {
-    "test": "node --test tests/frontier.test.mjs",
-    "test:integration": "node --experimental-strip-types --test tests/core.test.mjs tests/lifecycle.test.mts",
+    "test": "node --test tests/frontier.test.mjs tests/scope.test.mjs",
+    "test:integration": "node --experimental-strip-types --test tests/core.test.mjs tests/lifecycle.test.mts tests/patch.test.mjs",
     "patch:core": "node scripts/patch-core.mjs"
   }
 }

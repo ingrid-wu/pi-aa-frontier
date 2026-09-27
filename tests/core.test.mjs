@@ -28,5 +28,29 @@ for (const root of roots) {
     assert.equal(ctx.model, activeModel);
     ctx.setScopedModels([]);
     assert.deepEqual(ctx.scopedModels, []);
+    const { initTheme, theme } = await import(`${root}/dist/modes/interactive/theme/theme.js`);
+    const { InteractiveMode } = await import(`${root}/dist/modes/interactive/interactive-mode.js`);
+    initTheme('dark');
+    const available = { provider: 'test', id: 'available', name: 'Available' };
+    let view;
+    const fake = {
+      session: {
+        scopedModels: [{ model: available }],
+        modelRuntime: { getAvailableSnapshot: () => [available], refresh: async () => ({ errors: new Map() }) },
+        setScopedModels() {},
+      },
+      settingsManager: { getEnabledModels: () => ['test/available', 'test/missing-key'] },
+      showSelector: factory => { view = factory(() => {}); },
+      updateAvailableProviderCount() {},
+      ui: { requestRender() {} },
+    };
+    InteractiveMode.prototype.showModelsSelector.call(fake);
+    try {
+      const text = view.component.render(160).join('\n');
+      assert.ok(text.includes('missing-key'), 'saved unavailable models remain visible with an active scope');
+      assert.ok(text.includes(theme.fg('error', '✗ ')), 'unavailable entry has a red cross');
+      await new Promise(resolve => setImmediate(resolve));
+      assert.ok(view.component.render(160).join('\n').includes('missing-key'), 'catalog refresh preserves unavailable entry');
+    } finally { view.dispose(); }
   });
 }

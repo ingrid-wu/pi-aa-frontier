@@ -3,8 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
-import { fetchRows, frontier, selectModels, validateConfig } from './frontier.mjs';
+import { fetchRows, frontier, selectModels, validateConfig, formatFrontierStatus } from './frontier.mjs';
 import { promptApiKey } from './key-prompt.ts';
+import { addFrontierToScope, removeFrontierAdditions } from './scope.mjs';
 
 const directory = join(homedir(), '.pi/agent/aa-frontier');
 const configPath = join(directory, 'config.json');
@@ -17,14 +18,12 @@ export default async function (pi: ExtensionAPI) {
   let timer: ReturnType<typeof setInterval> | undefined;
   let pending: AbortController | undefined;
   let generation = 0;
-  let original: ExtensionContext['scopedModels'] | undefined;
-  let lastApplied: string | undefined;
+  let additions: ExtensionContext['scopedModels'] = [];
   let details = 'Not refreshed yet.';
   let lastError = '';
   let enabled = true;
   let disposed = false;
   let owner: ExtensionContext | undefined;
-  const signature = (models: ExtensionContext['scopedModels']) => JSON.stringify(models.map(entry => [entry.model.provider, entry.model.id, entry.thinkingLevel]));
   const notify = (ctx: ExtensionContext, message: string, error = false) => {
     if (ctx.hasUI) ctx.ui.notify(message, error ? 'warning' : 'info');
   };
@@ -63,9 +62,8 @@ export default async function (pi: ExtensionAPI) {
     pending = undefined;
   }
   function restore(ctx: ExtensionContext) {
-    if (original && lastApplied === signature(ctx.scopedModels) && typeof ctx.setScopedModels === 'function') ctx.setScopedModels(original);
-    original = undefined;
-    lastApplied = undefined;
+    if (additions.length && typeof ctx.setScopedModels === 'function') ctx.setScopedModels(removeFrontierAdditions(ctx.scopedModels, additions));
+    additions = [];
   }
   async function refresh(ctx: ExtensionContext, manual = false, allowPrompt = manual) {
     cancel();
@@ -112,21 +110,14 @@ export default async function (pi: ExtensionAPI) {
       if (!active()) return;
       const edge = frontier(data.rows);
       const result = selectModels(edge, ctx.modelRegistry.getAvailable(), settings.aliases, getSupportedThinkingLevels);
-      details = [
-        `AA Intelligence Index v${data.version}; refreshed ${new Date().toISOString()}.`,
-        'Global intelligence / blended API price frontier (3:1 input:output).',
-        ...edge.map(row => `${row.slug}: intelligence ${row.score}, $${row.price.toFixed(3)}/1M tokens`),
-        '',
-        `Matched ${result.selected.length} provider/model/effort entries:`,
-        ...result.selected.map(entry => `${entry.model.provider}/${entry.model.id}:${entry.thinkingLevel}`),
-        ...(result.unmatched.length ? ['', 'Unmatched (unavailable, ambiguous, or needs an explicit effort/alias):', ...result.unmatched.map(row => row.slug)] : []),
-      ].join('\n');
+      details = formatFrontierStatus(data.version, result, new Date().toISOString());
       if (!result.selected.length) throw new Error('No frontier models matched. Existing scope preserved; see /aa-frontier status and configure aliases.');
-      original ??= [...ctx.scopedModels];
-      ctx.setScopedModels(result.selected);
-      lastApplied = signature(ctx.scopedModels);
+      const merged = addFrontierToScope(ctx.scopedModels, additions, result.selected);
+      ctx.setScopedModels(merged.scope);
+      additions = merged.additions;
+      details += `\nAdditive scope: ${merged.scope.length ? `${merged.scope.length} total entries; ${additions.length} frontier additions` : 'all available Pi models (unrestricted)'}. Saved/manual selections and their efforts are preserved.`;
       lastError = '';
-      status(ctx, `AA frontier: ${result.selected.length}`);
+      status(ctx, `AA frontier: ${edge.length} global · ${result.selected.length} Pi matches · ${result.unmatched.length} unmatched`);
       if (manual) notify(ctx, details);
     } catch (error) {
       if (!active()) return;
@@ -171,7 +162,7 @@ export default async function (pi: ExtensionAPI) {
           enabled = false;
           cancel();
           restore(ctx);
-          details = 'Disabled. Previous scope restored unless you changed it manually.';
+          details = 'Disabled. Removed frontier additions; saved/manual selections preserved.';
           lastError = '';
           status(ctx);
           notify(ctx, details);

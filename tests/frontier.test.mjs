@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchRows, frontier, parsePage, selectModels, validateConfig } from '../extensions/aa-frontier/frontier.mjs';
+import { fetchRows, frontier, parsePage, selectModels, validateConfig, formatFrontierStatus } from '../extensions/aa-frontier/frontier.mjs';
 const row = (slug, score, price, name = slug) => ({ id: slug, slug, name, score, price });
 const raw = (id, score = 50, input = 1, output = 3) => ({ id, slug: id, name: id, evaluations: { artificial_analysis_intelligence_index: score }, pricing: { price_1m_input_tokens: input, price_1m_output_tokens: output } });
 const page = (data, n = 1, total = 1, version = 4) => ({ data, intelligence_index_version: version, pagination: { page: n, total_pages: total, has_more: n < total } });
@@ -55,6 +55,43 @@ test('requires explicit supported effort for reasoning models', () => {
   assert.equal(selectModels([row('gpt-5-high', 50, 1, 'GPT-5 (high)')], models, {}, levels).selected[0].thinkingLevel, 'high');
   assert.equal(selectModels([row('gpt-5-max', 50, 1, 'GPT-5 (max)')], models, {}, levels).selected.length, 0);
   assert.equal(selectModels([row('gpt-5-thinking', 50, 1, 'GPT-5 (Thinking)')], models, {}, levels).selected.length, 0);
+});
+test('matches AA compound effort labels without guessing variants or downgrading effort', () => {
+  const opus = row('claude-opus-5-5', 57.6, 8, 'Claude Opus 5.5 (Adaptive Reasoning, Max Effort, Default Fallback)');
+  const available = [model('claude-opus-5-5', true, 'anthropic')];
+  const result = selectModels([opus], available, {}, () => ['off', 'high', 'max']);
+  assert.equal(result.selected[0].thinkingLevel, 'max');
+  assert.equal(result.unmatched.length, 0);
+  const unsupported = selectModels([opus], available, {}, levels);
+  assert.equal(unsupported.selected.length, 0);
+  assert.match(unsupported.diagnostics[0].reasons.join(' '), /does not support.*max/);
+  for (const name of [
+    'Claude Opus 5.5 (Adaptive Reasoning, Max Effort, Special Fallback)',
+    'Claude Opus 5.5 (high, max)',
+    'Claude Opus 5.5 (Adaptive Reasoning)',
+  ]) {
+    assert.equal(selectModels([{ ...opus, name }], available, {}, () => ['off', 'high', 'max']).selected.length, 0);
+  }
+  const deepseek = row('deepseek-v4-flash-0420-high', 26, 0.1675, 'DeepSeek V4 Flash 0420 (Reasoning, High Effort)');
+  assert.equal(selectModels([deepseek], [model('deepseek-v4-flash-0420', true)], {}, levels).selected[0].thinkingLevel, 'high');
+});
+test('status shows unavailable frontier models separately from enabled Pi entries', () => {
+  const rows = [
+    row('mimo-v2-6-pro', 46.3, 0.54, 'MiMo-V2.6-Pro'),
+    row('claude-opus-5-5', 57.6, 8, 'Claude Opus 5.5 (Adaptive Reasoning, Max Effort, Default Fallback)'),
+  ];
+  const result = selectModels(frontier(rows), [model('claude-opus-5-5', true, 'anthropic')], {}, () => ['off', 'max']);
+  const text = formatFrontierStatus(4.3, result, 'test-time');
+  assert.match(text, /Full global frontier: 2 AA models/);
+  assert.match(text, /MiMo-V2.6-Pro/);
+  assert.match(text, /Provider\/setup needed/);
+  assert.match(text, /Available in Pi: anthropic\/claude-opus-5-5:max/);
+  assert.match(text, /Compatible frontier matches: 1 Pi provider\/model\/effort entries/);
+  const missingEffort = selectModels([rows[0]], [model('mimo-v2.6-pro', true)], {}, levels);
+  assert.match(missingEffort.diagnostics[0].reasons.join(' '), /does not specify a reasoning effort/);
+  const empty = selectModels(rows, [], {}, levels);
+  assert.match(formatFrontierStatus(4.3, empty, 'test-time'), /Compatible frontier matches: 0/);
+  assert.equal(empty.diagnostics.length, 2);
 });
 test('aliases are exact and require available model and supported effort', () => {
   const rows = [row('aa-slug', 50, 1)];
